@@ -1,39 +1,91 @@
-package starter
+package firstfailure
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 )
 
-func Test_Workflow(t *testing.T) {
-	testSuite := &testsuite.WorkflowTestSuite{}
-	env := testSuite.NewTestWorkflowEnvironment()
+type UnitTestSuite struct {
+	suite.Suite
+	testsuite.WorkflowTestSuite
 
-	var a *Activities
-	env.OnActivity(a.Activity, "Hello", "Temporal").Return("Hello Temporal!", nil)
-
-	env.ExecuteWorkflow(Workflow, "Hello", "Temporal")
-
-	require.True(t, env.IsWorkflowCompleted())
-	require.NoError(t, env.GetWorkflowError())
-	var result string
-	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, "Hello Temporal!", result)
+	env *testsuite.TestWorkflowEnvironment
 }
 
-func Test_Activity(t *testing.T) {
-	testSuite := &testsuite.WorkflowTestSuite{}
-	env := testSuite.NewTestActivityEnvironment()
+func (s *UnitTestSuite) SetupTest() {
+	s.env = s.NewTestWorkflowEnvironment()
+}
 
+func (s *UnitTestSuite) AfterTest(suiteName, testName string) {
+	s.env.AssertExpectations(s.T())
+}
+
+func (s *UnitTestSuite) Test_NilWorkflow() {
 	var a *Activities
-	env.RegisterActivity(a)
 
-	val, err := env.ExecuteActivity(a.Activity, "Hello", "World")
-	require.NoError(t, err)
+	// Everything returning nil should result in a successful nil
+	s.env.OnActivity(a.CheckInventory, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(a.Charge, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(a.FulfillOrder, mock.Anything, mock.Anything).Return(nil)
 
-	var res string
-	require.NoError(t, val.Get(&res))
-	require.Equal(t, "Hello World!", res)
+	s.env.ExecuteWorkflow(Workflow, OrderInfo{})
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+	s.NoError(s.env.GetWorkflowResult(nil))
+}
+
+func (s *UnitTestSuite) Test_ChargeFail_InsufficientFunds() {
+	var a *Activities
+
+	s.env.OnActivity(a.CheckInventory, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(a.Charge, mock.Anything, mock.Anything).Times(1).Return(&InsufficientFundsError{})
+	s.env.AssertNotCalled(s.T(), "FulfillOrder", mock.Anything, mock.Anything)
+
+	//s.env.OnActivity(a.FulfillOrder, mock.Anything, mock.Anything).Panic("mock-panic")
+
+	s.env.ExecuteWorkflow(Workflow, OrderInfo{})
+
+	s.True(s.env.IsWorkflowCompleted())
+
+	err := s.env.GetWorkflowError()
+	s.Error(err)
+	var applicationErr *temporal.ApplicationError
+	s.True(errors.As(err, &applicationErr))
+	s.Equal("InsufficientFundsError", applicationErr.Type())
+}
+
+func (s *UnitTestSuite) Test_ChargeFail_403() {
+	var a *Activities
+
+	s.env.OnActivity(a.CheckInventory, mock.Anything, mock.Anything).Return(nil)
+	s.env.OnActivity(a.Charge, mock.Anything, mock.Anything).Times(1).Return(
+		temporal.NewNonRetryableApplicationError(
+			"",
+			"ConnectionError",
+			&ConnectionError{code: 403, message: "Auth Fail"},
+		))
+	s.env.AssertNotCalled(s.T(), "FulfillOrder", mock.Anything, mock.Anything)
+
+	//s.env.OnActivity(a.FulfillOrder, mock.Anything, mock.Anything).Panic("mock-panic")
+
+	s.env.ExecuteWorkflow(Workflow, OrderInfo{})
+
+	s.True(s.env.IsWorkflowCompleted())
+
+	err := s.env.GetWorkflowError()
+	s.Error(err)
+	var applicationErr *temporal.ApplicationError
+	s.True(errors.As(err, &applicationErr))
+	s.Equal("ConnectionError", applicationErr.Type())
+}
+
+func TestUnitTestSuite(t *testing.T) {
+	suite.Run(t, new(UnitTestSuite))
 }

@@ -6,7 +6,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"starter"
+	"github.com/afitz0/firstfailure"
 )
 
 func main() {
@@ -16,10 +16,10 @@ func main() {
 	}
 	defer c.Close()
 
-	w := worker.New(c, "temporal-starter", worker.Options{})
+	w := worker.New(c, firstfailure.TASK_QUEUE, worker.Options{})
 
-	a := &starter.Activities{}
-	w.RegisterWorkflow(starter.Workflow)
+	a := &firstfailure.Activities{}
+	w.RegisterWorkflow(firstfailure.Workflow)
 	w.RegisterActivity(a)
 
 	err = w.Run(worker.InterruptCh())

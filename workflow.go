@@ -1,28 +1,47 @@
-package starter
+package firstfailure
 
 import (
 	"time"
 
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
-func Workflow(ctx workflow.Context, greeting string, name string) (string, error) {
-	ao := workflow.ActivityOptions{
-		StartToCloseTimeout: 10 * time.Second,
-	}
-	ctx = workflow.WithActivityOptions(ctx, ao)
+type OrderInfo struct {
+	// ...
+}
 
-	logger := workflow.GetLogger(ctx)
-	logger.Info("Starter workflow started", "greeting", greeting, "name", name)
+func Workflow(ctx workflow.Context, order OrderInfo) error {
+	retrypolicy := &temporal.RetryPolicy{
+		InitialInterval:        time.Second,
+		BackoffCoefficient:     2.0,
+		MaximumInterval:        time.Second * 120,
+		MaximumAttempts:        50,
+		NonRetryableErrorTypes: []string{"InsufficientFundsError", "AuthFailure"},
+	}
+
+	activityoptions := workflow.ActivityOptions{
+		RetryPolicy:         retrypolicy,
+		StartToCloseTimeout: 1 * time.Second,
+	}
+	ctx = workflow.WithActivityOptions(ctx, activityoptions)
 
 	var a *Activities
-	var result string
-	err := workflow.ExecuteActivity(ctx, a.Activity, greeting, name).Get(ctx, &result)
+
+	err := workflow.ExecuteActivity(ctx, a.CheckInventory, order).Get(ctx, nil)
 	if err != nil {
-		logger.Error("Activity failed.", "Error", err)
-		return "", err
+		return err
 	}
 
-	logger.Info("Starter workflow completed.", "result", result)
-	return result, nil
+	err = workflow.ExecuteActivity(ctx, a.Charge, order).Get(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	err = workflow.ExecuteActivity(ctx, a.FulfillOrder, order).Get(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

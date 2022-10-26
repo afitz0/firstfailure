@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"go.temporal.io/sdk/client"
 
-	"starter"
+	"github.com/afitz0/firstfailure"
 )
+
+const workflows = 100
 
 func main() {
 	c, err := client.NewLazyClient(client.Options{})
@@ -16,23 +19,18 @@ func main() {
 	}
 	defer c.Close()
 
-	workflowOptions := client.StartWorkflowOptions{
-		ID:        "temporal-starter-workflow",
-		TaskQueue: "temporal-starter",
+	for i := 0; i < workflows; i++ {
+		workflowOptions := client.StartWorkflowOptions{
+			ID:        fmt.Sprintf("failure-run-%d", i),
+			TaskQueue: firstfailure.TASK_QUEUE,
+		}
+
+		we, err := c.ExecuteWorkflow(context.Background(), workflowOptions, firstfailure.Workflow, firstfailure.OrderInfo{})
+		if err != nil {
+			log.Fatalln("Unable to execute workflow", err)
+		}
+
+		log.Println("Started workflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
 	}
 
-	we, err := c.ExecuteWorkflow(context.Background(), workflowOptions, starter.Workflow, "Hello", "World")
-	if err != nil {
-		log.Fatalln("Unable to execute workflow", err)
-	}
-
-	log.Println("Started workflow", "WorkflowID", we.GetID(), "RunID", we.GetRunID())
-
-	// Synchronously wait for the workflow completion.
-	var result string
-	err = we.Get(context.Background(), &result)
-	if err != nil {
-		log.Fatalln("Unable get workflow result", err)
-	}
-	log.Println("Workflow result:", result)
 }
